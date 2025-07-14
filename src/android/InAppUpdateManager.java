@@ -1,32 +1,31 @@
 package InAppUpdateManager;
 
+import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.IntentSender;
 
+import com.google.android.gms.tasks.Task;
 import com.google.android.play.core.appupdate.AppUpdateInfo;
 import com.google.android.play.core.appupdate.AppUpdateManager;
 import com.google.android.play.core.appupdate.AppUpdateManagerFactory;
 import com.google.android.play.core.install.model.AppUpdateType;
 import com.google.android.play.core.install.model.UpdateAvailability;
-import com.google.android.gms.tasks.Task;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
+import org.json.JSONObject;
 
-/**
- * This class echoes a string called from JavaScript.
- */
 public class InAppUpdateManager extends CordovaPlugin {
 
     public static final int REQUEST_CODE = 108108;
     protected AppUpdateManager appUpdateManager;
 
     @Override
-    public boolean execute(String action, JSONArray args,
-                           CallbackContext callbackContext) {
+    public boolean execute(String action, JSONArray args, CallbackContext callbackContext) {
         if (action.equals("immediate")) {
-
             Context context = cordova.getActivity().getApplicationContext();
             this.startUpdateCheck(context);
             return true;
@@ -53,28 +52,20 @@ public class InAppUpdateManager extends CordovaPlugin {
     }
 
     private void startUpdateCheck(Context context) {
-        // Creates instance of the manager.
         appUpdateManager = AppUpdateManagerFactory.create(context);
 
-        // Returns an intent object that you use to check for an update.
         Task<AppUpdateInfo> appUpdateInfoTask = appUpdateManager.getAppUpdateInfo();
 
-        // Checks that the platform will allow the specified type of update.
         appUpdateInfoTask.addOnSuccessListener(appUpdateInfo -> {
             if (appUpdateInfo.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE
-                    // For a flexible update, use AppUpdateType.FLEXIBLE
                     && appUpdateInfo.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
-                // Request the update.
 
                 try {
+                    cordova.setActivityResultCallback(this); // <--- Needed!
                     appUpdateManager.startUpdateFlowForResult(
-                            // Pass the intent that is returned by 'getAppUpdateInfo()'.
                             appUpdateInfo,
-                            // Or 'AppUpdateType.FLEXIBLE' for flexible updates.
                             AppUpdateType.IMMEDIATE,
-                            // The current activity making the update request.
                             cordova.getActivity(),
-                            // Include a request code to later monitor this update request.
                             REQUEST_CODE);
                 } catch (IntentSender.SendIntentException e) {
                     e.printStackTrace();
@@ -83,29 +74,48 @@ public class InAppUpdateManager extends CordovaPlugin {
         });
     }
 
-    // Checks that the update is not stalled during 'onResume()'.
-    // However, you should execute this check at all entry points into the app.
+    // This is where cancellation will be caught
     @Override
-    public void onResume(boolean multitaskin) {
-        super.onResume(multitaskin);
+    public void onActivityResult(int requestCode, int resultCode, Intent intent) {
+        if (requestCode == REQUEST_CODE) {
+            if (resultCode == Activity.RESULT_CANCELED) {
+                try {
+                    JSONObject event = new JSONObject();
+                    event.put("status", "cancelled");
+                    fireEvent("updateCancelled", event);  // JS event: updateCancelled
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
 
-        appUpdateManager
-                .getAppUpdateInfo()
-                .addOnSuccessListener(
-                        appUpdateInfo -> {
-                            if (appUpdateInfo.updateAvailability()
-                                    == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
-                                // If an in-app update is already running, resume the update.
-                                try {
-                                    appUpdateManager.startUpdateFlowForResult(
-                                            appUpdateInfo,
-                                            AppUpdateType.IMMEDIATE,
-                                            cordova.getActivity(),
-                                            REQUEST_CODE);
-                                } catch (IntentSender.SendIntentException e) {
-                                    e.printStackTrace();
-                                }
-                            }
-                        });
+    private void fireEvent(String eventName, JSONObject data) {
+        final String js = String.format("cordova.fireWindowEvent('%s', %s);", eventName, data.toString());
+        if (webView != null) {
+            webView.sendJavascript(js); // emits event to JS
+        }
+    }
+
+    @Override
+    public void onResume(boolean multitasking) {
+        super.onResume(multitasking);
+
+        if (appUpdateManager == null) return;
+
+        appUpdateManager.getAppUpdateInfo()
+                .addOnSuccessListener(appUpdateInfo -> {
+                    if (appUpdateInfo.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) {
+                        try {
+                            appUpdateManager.startUpdateFlowForResult(
+                                    appUpdateInfo,
+                                    AppUpdateType.IMMEDIATE,
+                                    cordova.getActivity(),
+                                    REQUEST_CODE);
+                        } catch (IntentSender.SendIntentException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                });
     }
 }
