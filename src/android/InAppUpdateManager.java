@@ -82,7 +82,8 @@ public class InAppUpdateManager extends CordovaPlugin {
                 try {
                     JSONObject event = new JSONObject();
                     event.put("status", "cancelled");
-                    fireEvent("updateCancelled", event);  // JS event: updateCancelled
+                    System.out.println("Firing downloadCancelled event: " + event.toString()); // Debug log
+                    fireEvent("downloadCancelled", event);  // Fixed: Changed from "updateCancelled" to "downloadCancelled"
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -92,8 +93,11 @@ public class InAppUpdateManager extends CordovaPlugin {
 
     private void fireEvent(String eventName, JSONObject data) {
         final String js = String.format("cordova.fireWindowEvent('%s', %s);", eventName, data.toString());
+        System.out.println("Executing JS: " + js); // Debug log
         if (webView != null) {
             webView.sendJavascript(js); // emits event to JS
+        } else {
+            System.out.println("WebView is null - cannot fire event");
         }
     }
 
